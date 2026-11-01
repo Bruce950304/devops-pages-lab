@@ -1,0 +1,6 @@
+title: 任玟旗 · DevOps Pages Lab
+description: GitHub Pages site with an auto-updated activity log
+theme: minima
+exclude:
+  - scripts/
+  - .github/

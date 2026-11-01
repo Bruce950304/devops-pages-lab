@@ -1,0 +1,7 @@
+_site/
+.jekyll-cache/
+.jekyll-metadata
+version.txt
+.DS_Store
+Thumbs.db
+.vscode/
