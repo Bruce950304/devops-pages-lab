@@ -15,4 +15,3 @@ DevOps course — Assignment 7: GitHub Pages + auto activity log.
 9. 📝 Committed to main in a private repository
 10. 📝 Committed to main in a private repository
 <!--END_SECTION:activity-->
-[Project notes](missing-page.html)
