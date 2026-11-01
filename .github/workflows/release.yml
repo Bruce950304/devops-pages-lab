@@ -1,0 +1,112 @@
+name: Release site (gate, deploy, smoke test)
+
+# build      : Jekyll build + stamp the commit SHA into version.txt
+# validate   : the GATE. Only a build that passes is packaged for Pages.
+# deploy     : runs only if validate passed (never for pull requests)
+# smoke-test : the LIVE site must serve this exact version (not just HTTP 200)
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      simulate_stale:
+        description: "Demo only: make the smoke test expect a version the site will never serve"
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pages: read
+    outputs:
+      base_path: ${{ steps.pages.outputs.base_path }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: pages
+        uses: actions/configure-pages@v5
+      - name: Stamp version into the site
+        run: echo "${GITHUB_SHA}" > version.txt
+      - name: Build with Jekyll
+        uses: actions/jekyll-build-pages@v1
+        with:
+          source: ./
+          destination: ./_site
+      - uses: actions/upload-artifact@v4
+        with:
+          name: site
+          path: _site
+          retention-days: 7
+
+  validate:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: site
+          path: _site
+      - name: Release gate
+        run: >
+          python3 scripts/validate_site.py
+          --readme README.md
+          --site _site
+          --base-path "${{ needs.build.outputs.base_path }}"
+          --expect-version "${GITHUB_SHA}"
+      - name: Package validated build for Pages
+        if: github.event_name != 'pull_request'
+        uses: actions/upload-pages-artifact@v5
+        with:
+          path: _site
+
+  deploy:
+    needs: validate
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    outputs:
+      page_url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v5
+
+  smoke-test:
+    needs: deploy
+    runs-on: ubuntu-latest
+    steps:
+      - name: Live site must serve this exact version
+        env:
+          URL: ${{ needs.deploy.outputs.page_url }}
+          EXPECTED: ${{ inputs.simulate_stale && 'stale-demo-0000000' || github.sha }}
+        run: |
+          base="${URL%/}"
+          for i in $(seq 1 20); do
+            live=$(curl -fsSL -H 'Cache-Control: no-cache' "$base/version.txt?nocache=$(date +%s%N)" | tr -d '[:space:]' || true)
+            echo "attempt $i: live=${live:-<none>} expected=$EXPECTED"
+            if [ "$live" = "$EXPECTED" ]; then
+              curl -fsSL "$base/?nocache=$(date +%s%N)" | grep -q "Recent activity" \
+                || { echo "::error::Version matches but homepage lost the activity section"; exit 1; }
+              echo "[PASS] Smoke test passed: $base serves $EXPECTED"
+              exit 0
+            fi
+            sleep 15
+          done
+          echo "::error title=Smoke test::Live site serves '${live:-nothing}', expected '$EXPECTED'"
+          exit 1
